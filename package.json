@@ -1,0 +1,15 @@
+{
+  "name": "surfers-backend",
+  "version": "1.0.0",
+  "description": "Surfers key checker: wallet proof, holder scan, key issue and entry check.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --no-warnings server.js",
+    "test": "node --no-warnings test/run.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "license": "UNLICENSED"
+}
