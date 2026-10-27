@@ -36,6 +36,24 @@ export const config = {
 
   // Which website may call this API (comma-separated). "*" allows any.
   allowedOrigins: (process.env.ALLOWED_ORIGIN || "*").split(",").map(s => s.trim()).filter(Boolean),
+
+  // ----- Waves / Swells -----
+  swellStart: Date.parse(process.env.SWELL_START || "2026-10-30T18:00:00Z"), // Swell 1 starts (UTC)
+  swellDays: num("SWELL_DAYS", 4),
+  poolPerSwell: num("POOL_PER_SWELL", 3000),       // $SURF split each Swell
+  adminToken: process.env.ADMIN_TOKEN || "",         // for the payout list
+  rescanMinutes: num("RESCAN_MINUTES", 10),          // how often holdings are re-checked while playing
+  timeTravel: process.env.ALLOW_TIME_TRAVEL === "1", // tests only
+
+  // Waves per action (before boost)
+  paddleWaves: num("PADDLE_WAVES", 10),
+  streakBonus: num("STREAK_BONUS", 50),              // every 7 days in a row
+  sets: [
+    { id: "x-follow", waves: 25,  period: "once" },
+    { id: "tg",       waves: 50,  period: "once" },
+    { id: "repost",   waves: 25,  period: "weekly" },
+    { id: "weekly",   waves: 100, period: "weekly" },
+  ],
 };
 
 export function checkConfig() {

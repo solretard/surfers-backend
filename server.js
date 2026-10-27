@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import { config, checkConfig } from "./config.js";
 import { store, newMemo } from "./db.js";
 import { scanHoldings, findProofPayment } from "./xrpl.js";
+import { board, paddle, claimSet, payoutList, swellAt } from "./waves.js";
+import { inviteFor, startTelegram, tgEnabled } from "./tg.js";
 
 checkConfig();
 
@@ -29,7 +31,7 @@ function cors(req, res) {
     res.setHeader("Access-Control-Allow-Origin", allow);
     res.setHeader("Vary", "Origin");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "content-type");
+    res.setHeader("Access-Control-Allow-Headers", "content-type, x-test-now");
   }
 }
 function send(res, status, body) {
@@ -41,11 +43,31 @@ async function readJson(req) {
   for await (const chunk of req) { raw += chunk; if (raw.length > 10_000) throw new Error("Body too large"); }
   try { return raw ? JSON.parse(raw) : {}; } catch { throw new Error("Bad JSON"); }
 }
+// Holdings cache: re-scan the ledger at most every RESCAN_MINUTES per wallet while playing.
+const holdCache = new Map();
+async function holdingFor(address, force = false) {
+  const c = holdCache.get(address);
+  if (!force && c && Date.now() - c.at < config.rescanMinutes * 60_000) return c.h;
+  const h = await scanHoldings(address);
+  holdCache.set(address, { h, at: Date.now() });
+  return h;
+}
+// Who is this key? Returns [row, holding] or an error reply.
+async function player(body, ip, force = false) {
+  if (limited(ip, "play", 60, 60_000)) return { err: [429, { error: "Slow down a little." }] };
+  const key = cleanKey(body.key);
+  const row = key.length === 8 ? store.keyByKey(key) : null;
+  if (!row) return { err: [401, { ok: false, reason: "bad_key" }] };
+  const h = await holdingFor(row.address, force);
+  if (!h.qualified) return { err: [403, { ok: false, reason: "below_bar", nfts: h.nfts, tokens: h.tokens }] };
+  return { row, h };
+}
+
 const clientIp = req => (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
 
 // ---------- routes ----------
 const routes = {
-  "GET /api/health": async () => [200, { ok: true, keys: store.keyCount() }],
+  "GET /api/health": async () => [200, { ok: true, keys: store.keyCount(), telegram: tgEnabled() }],
 
   // Step 1: give the wallet a memo code to send.
   "POST /api/verify/start": async (body, ip) => {
@@ -94,11 +116,56 @@ const routes = {
     if (key.length !== 8) return [400, { ok: false, reason: "bad_key" }];
     const row = store.keyByKey(key);
     if (!row) return [200, { ok: false, reason: "bad_key" }];
-    const h = await scanHoldings(row.address);
+    const h = await holdingFor(row.address, true);
     store.touchKey(key, h.nfts, h.tokens);
     const wallet = row.address.slice(0, 6) + "…" + row.address.slice(-4);
     if (!h.qualified) return [200, { ok: false, reason: "below_bar", wallet, nfts: h.nfts, tokens: h.tokens }];
     return [200, { ok: true, wallet, nfts: h.nfts, tokens: h.tokens }];
+  },
+
+  // ---------- inside the app ----------
+  "POST /api/me": async (body, ip, ctx) => {
+    const p = await player(body, ip);
+    if (p.err) return p.err;
+    return [200, { ok: true, ...board(p.row.address, p.h, ctx.now) }];
+  },
+
+  "POST /api/paddle": async (body, ip, ctx) => {
+    const p = await player(body, ip);
+    if (p.err) return p.err;
+    const r = paddle(p.row.address, p.h.boost, ctx.now);
+    return [r.ok ? 200 : 409, { ...r, board: board(p.row.address, p.h, ctx.now) }];
+  },
+
+  "POST /api/set": async (body, ip, ctx) => {
+    const p = await player(body, ip);
+    if (p.err) return p.err;
+    const r = claimSet(p.row.address, String(body.id || ""), p.h.boost, ctx.now);
+    return [r.ok ? 200 : 409, { ...r, board: board(p.row.address, p.h, ctx.now) }];
+  },
+
+  // ---------- holders-only Telegram group ----------
+  "POST /api/tg/invite": async (body, ip) => {
+    const p = await player(body, ip, true); // fresh scan: must hold right now
+    if (p.err) return p.err;
+    if (limited(ip, "tginv", 5, 10 * 60_000)) return [429, { ok: false, reason: "slow", error: "Too many invites. Try again in a few minutes." }];
+    const r = await inviteFor(p.row.address);
+    return [r.ok ? 200 : r.reason === "tg_off" ? 503 : 409, r];
+  },
+
+  // ---------- admin: who gets paid, and how much ----------
+  // GET /api/admin/payout?swell=1&token=ADMIN_TOKEN   (add &format=csv for a spreadsheet)
+  "GET /api/admin/payout": async (body, ip, ctx) => {
+    if (!config.adminToken || ctx.query.get("token") !== config.adminToken) return [401, { error: "Wrong admin token" }];
+    const current = swellAt(ctx.now);
+    const n = Number(ctx.query.get("swell") || (current.open ? Math.max(1, current.n - 1) : 1));
+    const list = payoutList(n);
+    const ended = n < current.n || (n === current.n && ctx.now >= current.ends);
+    if (ctx.query.get("format") === "csv") {
+      const lines = ["address,waves,share_percent,amount_surf", ...list.payouts.map(p => `${p.address},${p.waves},${p.share},${p.amount}`)];
+      return [200, lines.join("\n"), "text/csv"];
+    }
+    return [200, { ...list, ended, note: ended ? "Final. Safe to pay." : "This Swell is still running. Numbers will change." }];
   },
 };
 
@@ -110,7 +177,11 @@ const server = createServer(async (req, res) => {
   if (!handler) return send(res, 404, { error: "Not found" });
   try {
     const body = req.method === "POST" ? await readJson(req) : {};
-    const [status, out] = await handler(body, clientIp(req));
+    const query = new URL(req.url, "http://x").searchParams;
+    const testNow = config.timeTravel ? Number(req.headers["x-test-now"]) : NaN;
+    const ctx = { query, now: Number.isFinite(testNow) ? testNow : Date.now() };
+    const [status, out, type] = await handler(body, clientIp(req), ctx);
+    if (type) { res.writeHead(status, { "content-type": type }); return res.end(out); }
     send(res, status, out);
   } catch (err) {
     console.error(`[${req.method} ${path}]`, err.message);
@@ -118,4 +189,7 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(config.port, () => console.log(`Surfers backend on :${config.port}`));
+server.listen(config.port, () => {
+  console.log(`Surfers backend on :${config.port}`);
+  startTelegram(address => holdingFor(address, true));
+});

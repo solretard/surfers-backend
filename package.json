@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node --no-warnings server.js",
-    "test": "node --no-warnings test/run.js"
+    "test": "node --no-warnings test/run.js && node --no-warnings test/waves.js && node --no-warnings test/tg.js"
   },
   "engines": {
     "node": ">=22.13"

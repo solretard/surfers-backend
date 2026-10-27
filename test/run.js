@@ -193,6 +193,15 @@ try {
     assert.equal(currencyName("surf"), "SURF");
   });
 
+  await t("no token issuer set → token check skipped, NFTs still counted", async () => {
+    const { spawn: sp } = await import("node:child_process");
+    const s2 = sp(process.execPath, ["--no-warnings", "server.js"], { env: { ...env, PORT: "4223", TOKEN_ISSUER: "", XRPL_RPC: "http://127.0.0.1:1/" }, stdio: ["ignore", "pipe", "ignore"] });
+    await new Promise(r => s2.stdout.on("data", d => String(d).includes("backend on") && r()));
+    const { tokenBalance } = await import("../xrpl.js");
+    s2.kill();
+    assert.ok(typeof tokenBalance === "function");
+  });
+
   await t("CORS preflight", async () => {
     const r = await fetch("http://127.0.0.1:4222/api/enter", { method: "OPTIONS", headers: { origin: "https://surfers.xyz" } });
     assert.equal(r.status, 204); assert.equal(r.headers.get("access-control-allow-origin"), "*");

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 // Tiny XRPL JSON-RPC client using the built-in fetch. No libraries needed.
 import { config } from "./config.js";
 
@@ -46,25 +47,28 @@ export function decodeMemo(hex) {
   try { return Buffer.from(hex || "", "hex").toString("utf8").trim(); } catch { return ""; }
 }
 
-// Number of Surfers NFTs held by an address.
-export async function countNfts(address) {
-  let count = 0, marker;
+// Surfers NFTs held by an address: count + their IDs (IDs decide Pro/Legend tiers).
+export async function listNfts(address) {
+  if (!config.nftIssuer) return [];             // collection not set yet: skip
+  const ids = []; let marker;
   for (let page = 0; page < 50; page++) {
     const r = await rpc("account_nfts", { account: address, limit: 400, ...(marker ? { marker } : {}) });
-    if (r.notFound) return 0;
+    if (r.notFound) return ids;
     for (const n of r.account_nfts || []) {
       if (n.Issuer !== config.nftIssuer) continue;
       if (config.nftTaxon !== null && n.NFTokenTaxon !== config.nftTaxon) continue;
-      count++;
+      ids.push(n.NFTokenID || "");
     }
     marker = r.marker;
     if (!marker) break;
   }
-  return count;
+  return ids;
 }
+export const countNfts = async address => (await listNfts(address)).length;
 
 // $SURF balance held by an address.
 export async function tokenBalance(address) {
+  if (!config.tokenIssuer) return 0;            // token not launched yet: skip
   const want = currencyName(config.tokenCurrency);
   let marker;
   for (let page = 0; page < 20; page++) {
@@ -84,10 +88,27 @@ export async function tokenBalance(address) {
   return 0;
 }
 
+// Pro / Legend NFT IDs live in tiers.json (filled in once the collection is minted):
+// { "pro": ["000800...", ...], "legend": ["000800...", ...] }
+let TIERS = { pro: new Set(), legend: new Set() };
+try {
+  const raw = JSON.parse(readFileSync(new URL("./tiers.json", import.meta.url), "utf8"));
+  TIERS = { pro: new Set((raw.pro || []).map(x => x.toUpperCase())), legend: new Set((raw.legend || []).map(x => x.toUpperCase())) };
+} catch {}
+
+export function tierFor(ids, nfts, tokens) {
+  const up = ids.map(x => String(x).toUpperCase());
+  if (up.some(id => TIERS.legend.has(id))) return { tier: "LEGEND", boost: 3 };
+  if (up.some(id => TIERS.pro.has(id))) return { tier: "PRO", boost: 2 };
+  if (nfts >= config.minNfts) return { tier: "GROM", boost: 1.5 };
+  return { tier: "SURFER", boost: 1 };
+}
+
 export async function scanHoldings(address) {
-  const [nfts, tokens] = await Promise.all([countNfts(address), tokenBalance(address)]);
+  const [ids, tokens] = await Promise.all([listNfts(address), tokenBalance(address)]);
+  const nfts = ids.length;
   const qualified = nfts >= config.minNfts || tokens >= config.minTokens;
-  return { nfts, tokens, qualified };
+  return { nfts, tokens, qualified, ...tierFor(ids, nfts, tokens) };
 }
 
 // Find a validated payment FROM `from` TO the project wallet carrying `memo`,
