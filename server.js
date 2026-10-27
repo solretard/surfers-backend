@@ -52,11 +52,16 @@ const routes = {
     if (limited(ip, "start", 10, 60_000)) return [429, { error: "Slow down a little and try again." }];
     const address = String(body.address || "").trim();
     if (!isAddress(address)) return [400, { error: "That doesn't look like an XRPL address." }];
+
+    // Check holdings first (public data): don't ask for a payment if they can't qualify.
+    const h = await scanHoldings(address);
+    if (!h.qualified) return [200, { status: "not_qualified", nfts: h.nfts, tokens: h.tokens }];
+
     const now = Date.now();
     const memo = newMemo();
     const expires = now + config.challengeMinutes * 60_000;
     store.putChallenge(address, memo, now, expires);
-    return [200, { memo, expiresAt: expires, projectWallet: config.projectWallet }];
+    return [200, { status: "verify", memo, expiresAt: expires, projectWallet: config.projectWallet, nfts: h.nfts, tokens: h.tokens }];
   },
 
   // Step 2: look for the payment, then scan holdings and hand out the key.

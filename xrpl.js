@@ -30,12 +30,16 @@ async function rpc(method, params) {
   throw new Error(`XRPL request failed (${method}): ${lastErr?.message}`);
 }
 
-// "SURF" -> 40-char hex currency code; 3-letter codes and hex codes stay as they are.
-export function currencyCode(code) {
-  if (/^[0-9A-Fa-f]{40}$/.test(code)) return code.toUpperCase();
-  if (code.length === 3) return code.toUpperCase();
-  const hex = Buffer.from(code, "ascii").toString("hex").toUpperCase();
-  return hex.padEnd(40, "0");
+// Turn any currency code into its readable name, so "DIG", the standard
+// 160-bit form of DIG, and the hex form "4449470000..." all compare equal.
+export function currencyName(code) {
+  const c = String(code || "").trim();
+  if (/^[0-9A-Fa-f]{40}$/.test(c)) {
+    const buf = Buffer.from(c, "hex");
+    if (buf[0] === 0x00) return buf.subarray(12, 15).toString("ascii").replace(/\0/g, "").toUpperCase();
+    return buf.toString("ascii").replace(/\0/g, "").trim().toUpperCase();
+  }
+  return c.toUpperCase();
 }
 
 export function decodeMemo(hex) {
@@ -61,7 +65,7 @@ export async function countNfts(address) {
 
 // $SURF balance held by an address.
 export async function tokenBalance(address) {
-  const want = currencyCode(config.tokenCurrency);
+  const want = currencyName(config.tokenCurrency);
   let marker;
   for (let page = 0; page < 20; page++) {
     const r = await rpc("account_lines", {
@@ -69,7 +73,7 @@ export async function tokenBalance(address) {
     });
     if (r.notFound) return 0;
     for (const line of r.lines || []) {
-      if (line.account === config.tokenIssuer && currencyCode(line.currency) === want) {
+      if (line.account === config.tokenIssuer && currencyName(line.currency) === want) {
         const bal = Number(line.balance);
         return bal > 0 ? bal : 0;
       }

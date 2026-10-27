@@ -87,7 +87,7 @@ try {
   let memoA;
   await t("start gives a memo code", async () => {
     const r = await api("/api/verify/start", { address: A });
-    assert.equal(r.status, 200); assert.match(r.body.memo, /^SURF-[A-Z2-9]{6}$/);
+    assert.equal(r.status, 200); assert.equal(r.body.status, "verify"); assert.match(r.body.memo, /^SURF-[A-Z2-9]{6}$/);
     assert.equal(r.body.projectWallet, PROJECT);
     memoA = r.body.memo;
   });
@@ -122,10 +122,8 @@ try {
     assert.equal(r.body.status, "qualified"); assert.equal(r.body.key, keyA);
   });
 
-  await t("1 NFT + 3,200 $SURF → not qualified (wrong-taxon NFT not counted)", async () => {
-    const m = (await api("/api/verify/start", { address: B })).body.memo;
-    pay(B, m);
-    const r = await api("/api/verify/check", { address: B, memo: m });
+  await t("1 NFT + 3,200 $SURF → turned away at step 1, no payment asked (wrong-taxon NFT not counted)", async () => {
+    const r = await api("/api/verify/start", { address: B });
     assert.deepEqual(r.body, { status: "not_qualified", nfts: 1, tokens: 3200 });
   });
 
@@ -138,10 +136,18 @@ try {
     assert.notEqual(r.body.key, keyA); keyC = r.body.key;
   });
 
-  await t("brand-new wallet (not on ledger) → not qualified, no crash", async () => {
-    const m = (await api("/api/verify/start", { address: D })).body.memo;
-    pay(D, m);
-    assert.deepEqual((await api("/api/verify/check", { address: D, memo: m })).body, { status: "not_qualified", nfts: 0, tokens: 0 });
+  await t("brand-new wallet (not on ledger) → turned away at step 1, no crash", async () => {
+    assert.deepEqual((await api("/api/verify/start", { address: D })).body, { status: "not_qualified", nfts: 0, tokens: 0 });
+  });
+
+  await t("qualifies at step 1, sells before paying → not qualified at step 2", async () => {
+    nfts[B] = [1, 2, 3].map(() => ({ Issuer: NFT_ISSUER, NFTokenTaxon: 0 }));
+    const r1 = await api("/api/verify/start", { address: B });
+    assert.equal(r1.body.status, "verify"); assert.equal(r1.body.nfts, 3);
+    nfts[B] = [];
+    pay(B, r1.body.memo);
+    const r2 = await api("/api/verify/check", { address: B, memo: r1.body.memo });
+    assert.equal(r2.body.status, "not_qualified");
   });
 
   await t("enter with a valid key (lowercase + dash ok)", async () => {
@@ -175,6 +181,16 @@ try {
     fake.close(); fake.closeAllConnections?.();
     const r = await api("/api/enter", { key: keyC, _ip: "3.3.3.3" });
     assert.equal(r.status, 502); assert.match(r.body.error, /ledger is slow/);
+  });
+
+  await t("currency names match in every form", async () => {
+    const { currencyName } = await import("../xrpl.js");
+    const std = "000000000000000000000000" + Buffer.from("DIG").toString("hex").toUpperCase() + "0000000000";
+    assert.equal(currencyName("DIG"), "DIG");
+    assert.equal(currencyName(std), "DIG");
+    assert.equal(currencyName(Buffer.from("DIG").toString("hex").padEnd(40, "0")), "DIG");
+    assert.equal(currencyName(SURF_HEX), "SURF");
+    assert.equal(currencyName("surf"), "SURF");
   });
 
   await t("CORS preflight", async () => {
