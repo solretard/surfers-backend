@@ -11,6 +11,7 @@ const TOKEN_ISSUER = fix("rT0kenIssuerxxxxxxxxxxxxxxxxxxxxx", "a");
 const GROM = fix("rGr0mxxxxxxxxxxxxxxxxxxxxxxxxxxxxA");   // 3 plain NFTs → 1.5x
 const PRO = fix("rPr0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxB");    // 3 NFTs incl. a Pro → 2x
 const TOKY = fix("rT0kyxxxxxxxxxxxxxxxxxxxxxxxxxxxxC");   // tokens only → 1x
+const OWNER = fix("rOwnerxxxxxxxxxxxxxxxxxxxxxxxxxxxD");  // holds nothing, on OWNER_WALLETS
 const SURF_HEX = Buffer.from("SURF").toString("hex").toUpperCase().padEnd(40, "0");
 const PRO_ID = "000800PRO".padEnd(64, "0");
 const START = Date.parse("2026-11-01T00:00:00Z");
@@ -46,7 +47,7 @@ const srv = spawn(process.execPath, ["--no-warnings", "server.js"], {
   env: { ...process.env, PORT: "4322", DB_PATH: ":memory:", XRPL_RPC: "http://127.0.0.1:4311/",
          PROJECT_WALLET: PROJECT, NFT_ISSUER, NFT_TAXON: "0", TOKEN_ISSUER, TOKEN_CURRENCY: "SURF",
          SWELL_START: new Date(START).toISOString(), SWELL_DAYS: "4", POOL_PER_SWELL: "3000",
-         ADMIN_TOKEN: "secret123", RESCAN_MINUTES: "0", ALLOW_TIME_TRAVEL: "1" },
+         ADMIN_TOKEN: "secret123", RESCAN_MINUTES: "0", ALLOW_TIME_TRAVEL: "1", OWNER_WALLETS: OWNER },
   stdio: ["ignore", "pipe", "inherit"],
 });
 await new Promise(r => srv.stdout.on("data", d => String(d).includes("backend on") && r()));
@@ -151,6 +152,22 @@ try {
     nfts[GROM] = saved;
   });
 
+  await t("owner wallet with nothing gets a key and can enter", async () => {
+    const k = await keyFor(OWNER);
+    assert.ok(k, "no key");
+    const me = (await api("/api/me", { key: k }, at(9))).body;
+    assert.equal(me.ok, true);
+  });
+
+  await t("admin key: wrong token refused, non-owner refused, owner gets the same key", async () => {
+    const u = a => `http://127.0.0.1:4322/api/admin/key?token=${a}`;
+    assert.equal((await fetch(u("nope") + "&address=" + OWNER, { method: "POST" })).status, 401);
+    assert.equal((await fetch(u("secret123") + "&address=" + TOKY, { method: "POST" })).status, 403);
+    const r = await (await fetch(u("secret123") + "&address=" + OWNER, { method: "POST" })).json();
+    assert.equal(r.ok, true);
+    assert.equal((await api("/api/me", { key: r.key }, at(9))).body.ok, true);
+  });
+
   await t("bad key → 401", async () => {
     assert.equal((await api("/api/me", { key: "ZZZZZZZZ" }, at(1))).status, 401);
   });
@@ -181,7 +198,7 @@ try {
   await t("reset waves: wrong token refused, then clears waves but keeps keys", async () => {
     assert.equal((await fetch("http://127.0.0.1:4322/api/admin/reset-waves?token=nope&confirm=yes", { method: "POST" })).status, 401);
     const r = await (await fetch("http://127.0.0.1:4322/api/admin/reset-waves?token=secret123&confirm=yes", { method: "POST" })).json();
-    assert.equal(r.ok, true); assert.ok(r.clearedEvents > 0); assert.equal(r.keysKept, 3);
+    assert.equal(r.ok, true); assert.ok(r.clearedEvents > 0); assert.equal(r.keysKept, 4);
     const me = (await api("/api/me", { key: kG }, at(1))).body;
     assert.equal(me.ok, true); assert.equal(me.waves, 0); assert.equal(me.streak, 0);
   });

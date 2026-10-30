@@ -107,7 +107,8 @@ export function tierFor(ids, nfts, tokens) {
 export async function scanHoldings(address) {
   const [ids, tokens] = await Promise.all([listNfts(address), tokenBalance(address)]);
   const nfts = ids.length;
-  const qualified = nfts >= config.minNfts || tokens >= config.minTokens;
+  const owner = config.ownerWallets.includes(address);
+  const qualified = owner || nfts >= config.minNfts || tokens >= config.minTokens;
   return { nfts, tokens, qualified, ...tierFor(ids, nfts, tokens) };
 }
 

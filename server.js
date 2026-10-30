@@ -153,6 +153,16 @@ const routes = {
     return [r.ok ? 200 : r.reason === "tg_off" ? 503 : 409, r];
   },
 
+  // ---------- admin: get a key for a team wallet without the XRP proof ----------
+  // POST /api/admin/key?token=ADMIN_TOKEN&address=rTEAMWALLET   (wallet must be in OWNER_WALLETS)
+  "POST /api/admin/key": async (body, ip, ctx) => {
+    if (!config.adminToken || ctx.query.get("token") !== config.adminToken) return [401, { error: "Wrong admin token" }];
+    const address = ctx.query.get("address");
+    if (!isAddress(address)) return [400, { error: "Bad address" }];
+    if (!config.ownerWallets.includes(address)) return [403, { error: "Add this wallet to OWNER_WALLETS first" }];
+    return [200, { ok: true, address, key: store.issueKey(address) }];
+  },
+
   // ---------- admin: clear test waves, keep keys ----------
   // POST /api/admin/reset-waves?token=ADMIN_TOKEN&confirm=yes
   "POST /api/admin/reset-waves": async (body, ip, ctx) => {

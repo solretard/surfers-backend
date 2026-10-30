@@ -30,6 +30,8 @@ export const config = {
   // The bar.
   minNfts: num("MIN_NFTS", 3),
   minTokens: num("MIN_TOKENS", 10000),
+  // Team wallets that always get in (comma-separated). They still prove ownership with the memo payment.
+  ownerWallets: (process.env.OWNER_WALLETS || "").split(",").map(s => s.trim()).filter(Boolean),
 
   // How long a memo code stays valid (minutes).
   challengeMinutes: num("CHALLENGE_MINUTES", 15),
