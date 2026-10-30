@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { config, checkConfig } from "./config.js";
 import { store, newMemo } from "./db.js";
 import { scanHoldings, findProofPayment } from "./xrpl.js";
-import { board, paddle, claimSet, payoutList, swellAt } from "./waves.js";
+import { board, paddle, claimSet, payoutList, swellAt, resetWaves } from "./waves.js";
 import { inviteFor, startTelegram, tgEnabled } from "./tg.js";
 
 checkConfig();
@@ -151,6 +151,15 @@ const routes = {
     if (limited(ip, "tginv", 5, 10 * 60_000)) return [429, { ok: false, reason: "slow", error: "Too many invites. Try again in a few minutes." }];
     const r = await inviteFor(p.row.address);
     return [r.ok ? 200 : r.reason === "tg_off" ? 503 : 409, r];
+  },
+
+  // ---------- admin: clear test waves, keep keys ----------
+  // POST /api/admin/reset-waves?token=ADMIN_TOKEN&confirm=yes
+  "POST /api/admin/reset-waves": async (body, ip, ctx) => {
+    if (!config.adminToken || ctx.query.get("token") !== config.adminToken) return [401, { error: "Wrong admin token" }];
+    if (ctx.query.get("confirm") !== "yes") return [400, { error: "Add &confirm=yes" }];
+    const cleared = resetWaves();
+    return [200, { ok: true, clearedEvents: cleared, keysKept: store.keyCount() }];
   },
 
   // ---------- admin: who gets paid, and how much ----------

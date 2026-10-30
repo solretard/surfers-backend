@@ -152,3 +152,10 @@ export function payoutList(swellN) {
     })),
   };
 }
+
+// ---------- clear test waves (keeps keys) ----------
+export function resetWaves() {
+  const n = db.prepare("SELECT COUNT(*) AS n FROM events").get().n;
+  db.exec("BEGIN; DELETE FROM events; DELETE FROM paddles; DELETE FROM streaks; DELETE FROM set_claims; COMMIT;");
+  return n;
+}

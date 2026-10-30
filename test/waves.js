@@ -178,6 +178,14 @@ try {
     assert.equal(r.ended, false);
   });
 
+  await t("reset waves: wrong token refused, then clears waves but keeps keys", async () => {
+    assert.equal((await fetch("http://127.0.0.1:4322/api/admin/reset-waves?token=nope&confirm=yes", { method: "POST" })).status, 401);
+    const r = await (await fetch("http://127.0.0.1:4322/api/admin/reset-waves?token=secret123&confirm=yes", { method: "POST" })).json();
+    assert.equal(r.ok, true); assert.ok(r.clearedEvents > 0); assert.equal(r.keysKept, 3);
+    const me = (await api("/api/me", { key: kG }, at(1))).body;
+    assert.equal(me.ok, true); assert.equal(me.waves, 0); assert.equal(me.streak, 0);
+  });
+
   console.log(`\nAll ${passed} waves tests passed.`);
 } catch (e) {
   console.error("\n✗ FAILED:", e.message);
